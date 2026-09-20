@@ -1,0 +1,10 @@
+{
+  "total": 90,
+  "withHallucination": 37,
+  "clean": 53,
+  "tasks": {
+    "QA": 30,
+    "Summary": 30,
+    "Data2txt": 30
+  }
+}

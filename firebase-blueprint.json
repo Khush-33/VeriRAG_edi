@@ -1,0 +1,34 @@
+{
+  "entities": {
+    "DocumentFile": {
+      "title": "DocumentFile",
+      "description": "Uploaded or sample PDF documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "pageCount": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "uploadDate": { "type": "string" },
+        "isSample": { "type": "boolean" },
+        "content": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "content"]
+    },
+    "DocumentChunk": {
+      "title": "DocumentChunk",
+      "description": "Document metadata chunks stored in Firestore, with chunk text and pagination metadata only.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "docId": { "type": "string" },
+        "docName": { "type": "string" },
+        "pageNumber": { "type": "number" },
+        "text": { "type": "string" }
+      },
+      "required": ["id", "docId", "text"]
+    }
+  }
+}
