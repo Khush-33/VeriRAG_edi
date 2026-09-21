@@ -43,7 +43,7 @@ def train_model() -> None:
     logging_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[1/5] Loading Base Model & Tokenizer: {TrainConfig.BASE_MODEL_NAME}")
-    tokenizer = AutoTokenizer.from_pretrained(TrainConfig.BASE_MODEL_NAME)
+    tokenizer = AutoTokenizer.from_pretrained(TrainConfig.BASE_MODEL_NAME, use_fast=False)
     model = AutoModelForSequenceClassification.from_pretrained(
         TrainConfig.BASE_MODEL_NAME,
         num_labels=TrainConfig.NUM_CLASSES,
@@ -53,7 +53,9 @@ def train_model() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[Device] Running on: {device}")
-    model.to(device)
+    # CPU training with Python 3.14/PyTorch can load checkpoint tensors as Half;
+    # keep the downstream classifier and loss in a CPU-safe, consistent dtype.
+    model.to(device=device, dtype=torch.float32)
 
     print(f"[2/5] Loading and Parsing RAGTruth Dataset...")
     train_samples, val_samples, _ = load_and_split_ragtruth(TrainConfig.DATASET_PATH)
@@ -64,7 +66,7 @@ def train_model() -> None:
     train_loader = DataLoader(train_ds, batch_size=TrainConfig.BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=TrainConfig.EVAL_BATCH_SIZE, shuffle=False)
 
-    class_weights = torch.tensor(TrainConfig.CLASS_WEIGHTS, dtype=torch.float).to(device)
+    class_weights = torch.tensor(TrainConfig.CLASS_WEIGHTS, dtype=torch.float32, device=device)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=TrainConfig.LEARNING_RATE, weight_decay=TrainConfig.WEIGHT_DECAY)

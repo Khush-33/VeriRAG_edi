@@ -47,10 +47,21 @@ Where class weights $w = [1.0, 1.5, 3.0, 2.0]$ heavily penalize false negatives 
 pip install -r requirements.txt
 ```
 
+The DeBERTa tokenizer uses the slow SentencePiece backend. `sentencepiece` and
+`protobuf` are required; the training script explicitly disables the fast
+tokenizer conversion path.
+
+The training workflow uses `datasets/ragtruth/ragtruth_dataset.json`. The loader
+flattens each case's `groundTruthClaims` against its `retrievedContext` before
+splitting the real annotations into train, validation, and test records.
+
 ### Fine-Tuning
 ```bash
 python train.py
 ```
+
+Training must complete before evaluation. It creates the checkpoint under
+`saved_models/deberta-v3-ragtruth-finetuned`.
 
 ### Evaluation & Comparative Benchmarking
 ```bash

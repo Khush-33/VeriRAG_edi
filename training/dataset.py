@@ -71,6 +71,29 @@ def load_and_split_ragtruth(
         print(f"[RAGTruth Dataset] Dataset file {dataset_path} not found. Synthesizing full benchmark schema...")
         samples = generate_synthetic_ragtruth_full()
 
+    # The repository fixture stores one generated answer per case with nested
+    # ground-truth claims. Flatten those real annotations for model training.
+    normalized_samples = []
+    for item in samples:
+        if all(key in item for key in ("context", "claim", "verdict")):
+            normalized_samples.append(item)
+            continue
+
+        context = item.get("retrievedContext", "")
+        for claim_index, claim in enumerate(item.get("groundTruthClaims", [])):
+            claim_text = claim.get("claimText", "").strip()
+            verdict = claim.get("groundTruthVerdict")
+            if context and claim_text and verdict in label2id:
+                normalized_samples.append({
+                    "id": f"{item.get('id', 'ragtruth')}-claim-{claim_index + 1}",
+                    "context": context,
+                    "claim": claim_text,
+                    "verdict": verdict,
+                    "domain": item.get("domain", "RAGTruth")
+                })
+
+    samples = normalized_samples
+
     random.seed(seed)
     random.shuffle(samples)
 

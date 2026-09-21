@@ -11,7 +11,7 @@ class TrainConfig:
     SEED = 42
 
     # Dataset Configuration
-    DATASET_PATH = REPO_ROOT / 'datasets' / 'ragtruth_full.json'
+    DATASET_PATH = REPO_ROOT / 'datasets' / 'ragtruth' / 'ragtruth_dataset.json'
     MAX_SEQ_LENGTH = 512
     NUM_CLASSES = 4  # ENTAILED (SUPPORTED), PARTIAL, CONTRADICTED, UNSUPPORTED
     BATCH_SIZE = 16
