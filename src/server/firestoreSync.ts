@@ -1,4 +1,4 @@
-import { db } from '../lib/firebase';
+import { db, isFirebaseConfigured } from '../lib/firebase';
 import { collection, getDocs, doc, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { DocumentFile, DocumentChunk } from '../types';
 
@@ -7,7 +7,20 @@ function stripChunkEmbedding(chunkData: any): DocumentChunk {
   return rest as DocumentChunk;
 }
 
+function isReadableDocument(document: DocumentFile): boolean {
+  return typeof document.content === 'string'
+    && document.content.trim().length > 0
+    && !document.content.trimStart().startsWith('%PDF-');
+}
+
 export async function loadDocumentsFromFirestore(): Promise<{ documents: DocumentFile[]; chunks: DocumentChunk[] } | null> {
+  if (!db) {
+    if (!isFirebaseConfigured) {
+      console.warn('Firestore is disabled because Firebase environment variables are not configured.');
+    }
+    return null;
+  }
+
   try {
     const docsSnapshot = await getDocs(collection(db, 'documents'));
     if (docsSnapshot.empty) {
@@ -16,7 +29,12 @@ export async function loadDocumentsFromFirestore(): Promise<{ documents: Documen
 
     const documents: DocumentFile[] = [];
     docsSnapshot.forEach(d => {
-      documents.push(d.data() as DocumentFile);
+      const document = d.data() as DocumentFile;
+      if (isReadableDocument(document)) {
+        documents.push(document);
+      } else {
+        console.warn(`Ignoring unreadable Firestore document ${document.id || d.id}. Re-upload the original file to index it correctly.`);
+      }
     });
 
     const chunksSnapshot = await getDocs(collection(db, 'chunks'));
@@ -25,14 +43,19 @@ export async function loadDocumentsFromFirestore(): Promise<{ documents: Documen
       chunks.push(stripChunkEmbedding(c.data()));
     });
 
-    return { documents, chunks };
+    const readableDocumentIds = new Set(documents.map(document => document.id));
+    return {
+      documents,
+      chunks: chunks.filter(chunk => readableDocumentIds.has(chunk.docId))
+    };
   } catch (error) {
-    console.warn('Firestore load warning (falling back to memory store):', error);
-    return null;
+    throw new Error(`Firestore load failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 export async function saveDocumentToFirestore(document: DocumentFile, chunks: DocumentChunk[]): Promise<void> {
+  if (!db) return;
+
   try {
     await setDoc(doc(db, 'documents', document.id), document);
     
@@ -49,11 +72,13 @@ export async function saveDocumentToFirestore(document: DocumentFile, chunks: Do
       await batch.commit();
     }
   } catch (error) {
-    console.warn('Firestore save document error:', error);
+    throw new Error(`Firestore save failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 export async function deleteDocumentFromFirestore(docId: string, chunks: DocumentChunk[]): Promise<void> {
+  if (!db) return;
+
   try {
     await deleteDoc(doc(db, 'documents', docId));
     
@@ -68,6 +93,6 @@ export async function deleteDocumentFromFirestore(docId: string, chunks: Documen
       await batch.commit();
     }
   } catch (error) {
-    console.warn('Firestore delete document error:', error);
+    throw new Error(`Firestore delete failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }

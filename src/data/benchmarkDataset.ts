@@ -1,4 +1,4 @@
-import { BenchmarkCase, MethodBenchmarkResult } from "../types";
+import { BenchmarkCase } from "../types";
 
 export const RAGTRUTH_BENCHMARK_CASES: BenchmarkCase[] = [
   {
@@ -648,65 +648,3 @@ export function getBenchmarkCases(filter: string): BenchmarkCase[] {
   return BENCHMARK_CASES;
 }
 
-export const INITIAL_METHOD_METRICS: MethodBenchmarkResult[] = [
-  {
-    method: "hybrid",
-    methodName: "VeriRAG Hybrid (Proposed Research Model)",
-    accuracy: 96.2,
-    precision: 95.8,
-    recall: 96.5,
-    f1Score: 96.1,
-    avgLatencyMs: 120,
-    hallucinationReductionRate: 98.4,
-    falsePositiveRate: 2.1,
-    falseNegativeRate: 3.5,
-    avgConfidence: 94,
-    confusionMatrix: {
-      truePositive: 58,
-      trueNegative: 28,
-      falsePositive: 2,
-      falseNegative: 2
-    },
-    description: "Combines sentence-level claim decomposition, SentenceTransformers 384-d dense vector search, lexical similarity, and fine-tuned DeBERTa NLI cross-encoder verification."
-  },
-  {
-    method: "nli_only",
-    methodName: "DeBERTa NLI Cross-Encoder Only",
-    accuracy: 86.4,
-    precision: 85.0,
-    recall: 87.8,
-    f1Score: 86.3,
-    avgLatencyMs: 185,
-    hallucinationReductionRate: 84.1,
-    falsePositiveRate: 8.5,
-    falseNegativeRate: 12.2,
-    avgConfidence: 82,
-    confusionMatrix: {
-      truePositive: 51,
-      trueNegative: 25,
-      falsePositive: 7,
-      falseNegative: 7
-    },
-    description: "Evaluates Premise vs Hypothesis entailment probabilities directly. Strong logical deduction for contradiction, but sensitive to retrieval context noise."
-  },
-  {
-    method: "semantic_only",
-    methodName: "Semantic Cosine Vector Search Only",
-    accuracy: 71.2,
-    precision: 68.5,
-    recall: 74.0,
-    f1Score: 71.1,
-    avgLatencyMs: 45,
-    hallucinationReductionRate: 52.3,
-    falsePositiveRate: 18.2,
-    falseNegativeRate: 26.0,
-    avgConfidence: 70,
-    confusionMatrix: {
-      truePositive: 42,
-      trueNegative: 21,
-      falsePositive: 12,
-      falseNegative: 15
-    },
-    description: "Measures dense vector similarity between claims and retrieved text chunks. Extremely fast, but fails to detect negation or numeric hallucinations."
-  }
-];

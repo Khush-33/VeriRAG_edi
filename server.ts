@@ -1,5 +1,7 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { SAMPLE_ACADEMIC_DOCS } from './src/data/sampleAcademicDocs';
 import {
@@ -32,6 +34,7 @@ import {
   saveDocumentToFirestore,
   deleteDocumentFromFirestore
 } from './src/server/firestoreSync';
+import { ensureFirebaseAuthentication, isFirebaseConfigured } from './src/lib/firebase';
 
 // In-memory document and DenseVectorIndex store
 let documentsStore: DocumentFile[] = [];
@@ -64,6 +67,11 @@ async function populateSampleDocuments() {
 }
 
 async function startServer() {
+  if (isFirebaseConfigured) {
+    await ensureFirebaseAuthentication();
+    console.log('[Firebase] Authenticated Firestore session initialized.');
+  }
+
   // Pre-warm Hugging Face ML models
   await initializeMLModels();
 
@@ -133,11 +141,19 @@ async function startServer() {
     try {
       const { name, category, content, pdfBase64 } = req.body;
 
-      if (!name) {
+      if (typeof name !== 'string' || name.trim().length === 0) {
         return res.status(400).json({ error: 'Document name is required.' });
       }
 
-      let parsedText = content || '';
+      if (content !== undefined && typeof content !== 'string') {
+        return res.status(400).json({ error: 'Document content must be text.' });
+      }
+
+      if (pdfBase64 !== undefined && typeof pdfBase64 !== 'string') {
+        return res.status(400).json({ error: 'PDF content must be a base64 string.' });
+      }
+
+      let parsedText = content ? String(content).trim() : '';
       let pageCount = 1;
 
       if (pdfBase64) {
@@ -150,19 +166,20 @@ async function startServer() {
             pageCount = pdfData.pageCount || 1;
           }
         } catch (pdfErr) {
-          console.error('PDF parsing error, attempting raw text fallback:', pdfErr);
+          console.error('PDF parsing error:', pdfErr);
         }
       }
 
-      // If parsing resulted in no text, generate a readable fallback so upload NEVER crashes
       if (!parsedText || parsedText.trim().length === 0) {
-        parsedText = `[Uploaded Document: ${name}]\nDocument category: ${category || 'Academic Document'}\nNotice: Document content indexed for vector search context grounding.`;
+        return res.status(400).json({
+          error: 'Uploaded document produced no readable text. Please upload a valid PDF or text file with actual content.'
+        });
       }
 
-      const docId = `doc-${Date.now()}`;
+      const docId = `doc-${randomUUID()}`;
       const newDoc: DocumentFile = {
         id: docId,
-        name: name.endsWith('.pdf') ? name : `${name}.pdf`,
+        name: name.trim().endsWith('.pdf') ? name.trim() : `${name.trim()}.pdf`,
         category: category || 'Academic Regulations',
         pageCount: Math.max(pageCount, Math.ceil(parsedText.length / 1200)),
         chunkCount: 0,
@@ -175,12 +192,16 @@ async function startServer() {
       const chunks = await chunkDocumentText(docId, newDoc.name, parsedText);
       newDoc.chunkCount = chunks.length;
 
+      await addChunksToVectorIndex(chunks);
+      try {
+        await saveDocumentToFirestore(newDoc, chunks);
+      } catch (persistenceError) {
+        await deleteChunksFromVectorIndex(docId);
+        throw persistenceError;
+      }
+
       documentsStore.push(newDoc);
       chunksStore.push(...chunks);
-
-      // Persist to Firebase Firestore
-      await saveDocumentToFirestore(newDoc, chunks);
-      await addChunksToVectorIndex(chunks);
 
       res.json({
         success: true,
@@ -383,4 +404,11 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[Server] Startup failed: ${message}`);
+  if (message.includes('auth/admin-restricted-operation')) {
+    console.error('[Server] Enable Firebase Authentication > Sign-in method > Anonymous for the configured project, then restart npm run dev.');
+  }
+  process.exitCode = 1;
+});

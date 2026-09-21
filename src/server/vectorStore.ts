@@ -24,6 +24,7 @@ export interface IVectorDatabase {
   deleteChunksByDocId(docId: string): Promise<void>;
   clear(): Promise<void>;
   getStats(): { totalChunks: number; dimension: number; indexType: string };
+  getChunkIds(): string[];
   saveToFile(filePath: string): Promise<void>;
   loadFromFile(filePath: string): Promise<boolean>;
 }
@@ -38,7 +39,11 @@ export class DenseVectorStore implements IVectorDatabase {
 
   public async addChunk(chunk: DocumentChunk): Promise<void> {
     if (!chunk.embedding || chunk.embedding.length !== this.dimension) {
-      return;
+      throw new Error(`Invalid embedding for chunk ${chunk.id}: expected ${this.dimension} dimensions.`);
+    }
+
+    if (!chunk.embedding.every(value => Number.isFinite(value))) {
+      throw new Error(`Invalid embedding for chunk ${chunk.id}: all values must be finite numbers.`);
     }
 
     const item: VectorItem = {
@@ -116,6 +121,10 @@ export class DenseVectorStore implements IVectorDatabase {
     };
   }
 
+  public getChunkIds(): string[] {
+    return this.items.map(item => item.chunkId);
+  }
+
   public async saveToFile(filePath: string): Promise<void> {
     const dir = path.dirname(filePath);
     await fs.mkdir(dir, { recursive: true });
@@ -127,9 +136,14 @@ export class DenseVectorStore implements IVectorDatabase {
       const raw = await fs.readFile(filePath, 'utf-8');
       const loaded = JSON.parse(raw) as VectorItem[];
       if (!Array.isArray(loaded)) return false;
-      this.items = loaded.filter(item => Array.isArray(item.embedding) && item.embedding.length === this.dimension);
+      const invalidItems = loaded.filter(item => !Array.isArray(item.embedding) || item.embedding.length !== this.dimension);
+      if (invalidItems.length > 0) {
+        throw new Error(`Vector index contains ${invalidItems.length} invalid embeddings.`);
+      }
+      this.items = loaded;
       return true;
-    } catch {
+    } catch (error) {
+      console.warn(`Vector index load failed: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }

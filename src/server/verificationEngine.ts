@@ -56,12 +56,8 @@ export async function getNliPipeline() {
 
 // Pre-warm Hugging Face models on server start
 export async function initializeMLModels() {
-  try {
-    await Promise.all([getExtractorPipeline(), getNliPipeline()]);
-    console.log('[ML Engine] All real ML models initialized and warmed up.');
-  } catch (err) {
-    console.error('[ML Engine] Error initializing ML models:', err);
-  }
+  await Promise.all([getExtractorPipeline(), getNliPipeline()]);
+  console.log('[ML Engine] All real ML models initialized and warmed up.');
 }
 
 // ============================================================================
@@ -77,8 +73,7 @@ export async function generateDenseEmbedding(text: string): Promise<number[]> {
     const output = await extractor(text, { pooling: 'mean', normalize: true });
     return Array.from(output.data as Float32Array);
   } catch (err) {
-    console.error('[ML Engine] Dense embedding extraction error:', err);
-    return new Array(384).fill(0);
+    throw new Error(`Dense embedding extraction failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -213,7 +208,12 @@ export async function addChunksToVectorIndex(chunks: DocumentChunk[]): Promise<v
 
 export async function loadOrBuildVectorIndex(chunks: DocumentChunk[]): Promise<void> {
   const loaded = await vectorStore.loadFromFile(VECTOR_STORE_FILE);
-  if (loaded && vectorStore.getStats().totalChunks > 0) {
+  const indexedChunkIds = new Set(vectorStore.getChunkIds());
+  const sourceChunkIds = new Set(chunks.map(chunk => chunk.id));
+  const indexMatchesSource = indexedChunkIds.size === sourceChunkIds.size
+    && Array.from(sourceChunkIds).every(chunkId => indexedChunkIds.has(chunkId));
+
+  if (loaded && indexMatchesSource) {
     console.log(`[Vector Index] Loaded persisted vector index with ${vectorStore.getStats().totalChunks} chunks from disk.`);
     return;
   }
@@ -236,46 +236,92 @@ export async function deleteChunksFromVectorIndex(docId: string): Promise<void> 
 // DOCUMENT CHUNKING
 // ============================================================================
 
-export async function chunkDocumentText(docId: string, docName: string, fullText: string): Promise<DocumentChunk[]> {
-  const rawChunks: DocumentChunk[] = [];
+export interface ChunkingOptions {
+  chunkSize?: number;
+  overlap?: number;
+  minChunkLength?: number;
+}
 
+export async function chunkDocumentText(
+  docId: string,
+  docName: string,
+  fullText: string,
+  options: ChunkingOptions = {}
+): Promise<DocumentChunk[]> {
+  const trimmedText = typeof fullText === 'string' ? fullText.trim() : '';
+  if (!trimmedText || trimmedText.length === 0) {
+    throw new Error('Document text is empty or non-empty text could not be extracted.');
+  }
+
+  const chunkSize = Math.max(80, Math.min(2000, options.chunkSize ?? 500));
+  const overlap = Math.max(0, Math.min(chunkSize - 1, options.overlap ?? 80));
+  const minChunkLength = Math.max(20, options.minChunkLength ?? 80);
+
+  const normalizedText = trimmedText.replace(/\r\n/g, '\n').replace(/\s+\n/g, '\n').trim();
   const pageRegex = /\[Page\s+(\d+)\]/gi;
-  const pageMatches = Array.from(fullText.matchAll(pageRegex));
+  const pageMatches = Array.from(normalizedText.matchAll(pageRegex));
 
+  const pageSegments: Array<{ pageNumber: number; text: string }> = [];
   if (pageMatches.length > 0) {
     for (let i = 0; i < pageMatches.length; i++) {
       const pageNum = parseInt(pageMatches[i][1], 10);
       const startIndex = pageMatches[i].index! + pageMatches[i][0].length;
-      const endIndex = (i + 1 < pageMatches.length) ? pageMatches[i + 1].index! : fullText.length;
-
-      const pageContent = fullText.substring(startIndex, endIndex).trim();
-      const paragraphs = pageContent.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-
-      paragraphs.forEach((para, idx) => {
-        if (para.trim().length > 10) {
-          const text = para.trim();
-          rawChunks.push({
-            id: `${docId}-p${pageNum}-c${idx + 1}`,
-            docId,
-            docName,
-            pageNumber: pageNum,
-            text
-          });
-        }
-      });
+      const endIndex = i + 1 < pageMatches.length ? pageMatches[i + 1].index! : normalizedText.length;
+      const pageContent = normalizedText.substring(startIndex, endIndex).trim();
+      if (pageContent.length > 0) {
+        pageSegments.push({ pageNumber: pageNum, text: pageContent });
+      }
     }
   } else {
-    const paragraphs = fullText.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-    paragraphs.forEach((para, idx) => {
-      const text = para.trim();
-      rawChunks.push({
-        id: `${docId}-c${idx + 1}`,
-        docId,
-        docName,
-        pageNumber: 1,
-        text
-      });
-    });
+    pageSegments.push({ pageNumber: 1, text: normalizedText });
+  }
+
+  const rawChunks: DocumentChunk[] = [];
+  let chunkCounter = 1;
+
+  for (const segment of pageSegments) {
+    const paragraphs = segment.text
+      .split(/\n\s*\n/)
+      .map(p => p.trim())
+      .filter(p => p.length > minChunkLength || /[.!?]$/.test(p));
+
+    for (const paragraph of paragraphs) {
+      const text = paragraph.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+
+      if (text.length <= chunkSize) {
+        rawChunks.push({
+          id: `${docId}-p${segment.pageNumber}-c${chunkCounter++}`,
+          docId,
+          docName,
+          pageNumber: segment.pageNumber,
+          text
+        });
+        continue;
+      }
+
+      let start = 0;
+      while (start < text.length) {
+        const end = Math.min(start + chunkSize, text.length);
+        const chunkText = text.slice(start, end).trim();
+        if (chunkText.length >= minChunkLength) {
+          rawChunks.push({
+            id: `${docId}-p${segment.pageNumber}-c${chunkCounter++}`,
+            docId,
+            docName,
+            pageNumber: segment.pageNumber,
+            text: chunkText
+          });
+        }
+
+        if (end >= text.length) break;
+        start = Math.max(start + chunkSize - overlap, start + 1);
+      }
+    }
+  }
+
+  if (rawChunks.length === 0) {
+    throw new Error('No chunks could be generated from the extracted document text.');
   }
 
   return rawChunks;
@@ -288,8 +334,10 @@ export async function retrieveRelevantChunks(
 ): Promise<DocumentChunk[]> {
   if (activeChunks.length === 0) return [];
 
-  if (vectorStore.getStats().totalChunks === 0) {
-    await rebuildVectorIndexFromChunks(activeChunks);
+  const indexedChunkIds = new Set(vectorStore.getChunkIds());
+  const missingChunks = activeChunks.filter(chunk => !indexedChunkIds.has(chunk.id));
+  if (missingChunks.length > 0) {
+    await addChunksToVectorIndex(missingChunks);
   }
 
   const queryEmbedding = await generateDenseEmbedding(query);
@@ -311,34 +359,23 @@ export async function retrieveRelevantChunks(
 
 export function generateLocalRAGAnswer(question: string, retrievedChunks: DocumentChunk[]): string {
   if (retrievedChunks.length === 0) {
-    return 'No relevant academic document context found to answer the query.';
+    return 'No relevant evidence was retrieved for this question from the loaded knowledge base.';
   }
 
-  const qLower = question.toLowerCase();
+  const topEvidence = retrievedChunks
+    .slice(0, 4)
+    .map(chunk => chunk.text.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
 
-  if (qLower.includes('attendance') || qLower.includes('fine') || qLower.includes('65%')) {
-    const hasFineMention = retrievedChunks.some(c => c.text.toLowerCase().includes('fine') || c.text.toLowerCase().includes('fee'));
-    if (hasFineMention) {
-      return "The minimum attendance required to appear for semester examinations is 75%. If a student's attendance falls between 65% and 75%, they can pay a monetary fine to the examination cell to sit for the exam.";
-    }
-    return "The minimum attendance required for semester examinations is 75%. Medical condonation is allowed up to 10% (between 65% and 75%) with Director approval upon submitting valid medical certificates.";
+  if (topEvidence.length === 0) {
+    return 'The retrieved evidence was empty; no answer could be synthesized from the current knowledge base.';
   }
 
-  if (qLower.includes('credit') || qLower.includes('b.tech') || qLower.includes('semester load')) {
-    return 'To graduate with a B.Tech degree, a student must successfully complete 160 credits over 8 semesters. The standard course load per semester is between 20 and 24 credits, up to a maximum of 28 credits with Dean approval. Furthermore, students with CPI above 9.0 can register for up to 32 credits per semester.';
-  }
+  const summarySource = topEvidence
+    .map(text => text.split(/(?<=[.!?])\s+/).slice(0, 2).join(' '))
+    .join(' ');
 
-  if (qLower.includes('placement') || qLower.includes('cpi') || qLower.includes('offer')) {
-    return 'Students must have a minimum aggregate CPI of 6.50 at the end of the 6th semester with no active backlogs to participate in campus placements. Once a student receives a placement offer, they cannot apply for any other company under any circumstances as per the strict one-job policy.';
-  }
-
-  if (qLower.includes('hostel') || qLower.includes('curfew') || qLower.includes('late')) {
-    return 'All hostellers must return to their hostel premises before 10:00 PM on weekdays and 10:30 PM on weekends. Late entry without prior warden permission incurs a fine of Rs. 200 for the first offense and Rs. 500 for subsequent offenses. In addition, repeated late entry leads to automatic hostel expulsion after 3 strikes.';
-  }
-
-  const topText = retrievedChunks[0].text;
-  const sentences = topText.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ');
-  return sentences || topText;
+  return `Based on the retrieved evidence, ${summarySource.substring(0, 600)}${summarySource.length > 600 ? '…' : ''}`;
 }
 
 // ============================================================================
@@ -425,12 +462,7 @@ export async function evaluateDeBERTaNLIProbs(
     };
   } catch (err) {
     console.error('[ML Engine] Real DeBERTa NLI evaluation error:', err);
-    return {
-      entailmentProb: 0.33,
-      contradictionProb: 0.33,
-      neutralProb: 0.34,
-      reasoning: 'Error running real DeBERTa NLI cross-encoder.'
-    };
+    throw new Error(`NLI inference failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

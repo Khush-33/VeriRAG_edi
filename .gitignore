@@ -6,3 +6,15 @@ coverage/
 *.log
 .env*
 !.env.example
+# Dependencies
+node_modules/
+
+# Model and transformer cache
+.cache/
+
+# Environment variables
+.env
+.env.local
+
+# Build output
+dist/

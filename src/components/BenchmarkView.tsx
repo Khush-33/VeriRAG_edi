@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   BarChart2,
   Clock,
@@ -29,13 +29,19 @@ export const BenchmarkView: React.FC<BenchmarkViewProps> = ({
   isLoading
 }) => {
   const [selectedDataset, setSelectedDataset] = useState<string>('RAGTruth');
-  const [selectedCase, setSelectedCase] = useState<BenchmarkCase | null>(benchmarkCases[0] || null);
+  const [selectedCase, setSelectedCase] = useState<BenchmarkCase | null>(null);
+
+  useEffect(() => {
+    setSelectedCase(benchmarkCases[0] || null);
+  }, [benchmarkCases]);
 
   const handleRunBenchmark = () => {
     onRunBenchmarkSuite(selectedDataset);
   };
 
   const handleDownloadReport = () => {
+    if (methodMetrics.length === 0 && benchmarkCases.length === 0) return;
+
     const reportData = {
       timestamp: new Date().toISOString(),
       dataset: selectedDataset,
@@ -111,11 +117,21 @@ export const BenchmarkView: React.FC<BenchmarkViewProps> = ({
         </div>
       </div>
 
+      {methodMetrics.length === 0 && (
+        <div className="rounded-3xl border border-white/[0.06] bg-zinc-900/70 px-6 py-16 text-center">
+          <BarChart2 className="mx-auto mb-3 h-8 w-8 text-zinc-600" />
+          <h3 className="text-sm font-medium text-zinc-200">No evaluation results yet</h3>
+          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-zinc-500">
+            Choose a dataset and run the evaluation. Metrics and test cases will appear here after the benchmark API returns them.
+          </p>
+        </div>
+      )}
+
       {/* Comparative Cards for 3 Methods */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {methodMetrics.map((item) => {
           const isHybrid = item.method === 'hybrid';
-          const cm = item.confusionMatrix || { truePositive: 22, trueNegative: 35, falsePositive: 2, falseNegative: 1 };
+          const cm = item.confusionMatrix;
           return (
             <div
               key={item.method}

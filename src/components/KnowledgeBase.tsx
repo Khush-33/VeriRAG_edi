@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Trash2, Upload, FileText, RefreshCw } from 'lucide-react';
-import { DocumentCategory, DocumentFile } from '../types';
+import { ChevronDown, FileText, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { DocumentCategory, DocumentChunk, DocumentFile } from '../types';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { SectionHeader } from './ui/SectionHeader';
@@ -37,6 +37,9 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({
   const [rawContent, setRawContent] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
+  const [chunksByDocument, setChunksByDocument] = useState<Record<string, DocumentChunk[]>>({});
+  const [loadingChunksFor, setLoadingChunksFor] = useState<string | null>(null);
 
   const handleFileChange = (file: File | null) => {
     if (!file) return;
@@ -84,6 +87,29 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({
     } catch (err) {
       console.error('Failed to upload document:', err);
       setIsUploading(false);
+    }
+  };
+
+  const handleToggleChunks = async (documentId: string) => {
+    if (expandedDocId === documentId) {
+      setExpandedDocId(null);
+      return;
+    }
+
+    setExpandedDocId(documentId);
+    if (chunksByDocument[documentId]) return;
+
+    setLoadingChunksFor(documentId);
+    try {
+      const response = await fetch(`/api/documents/${documentId}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to load document chunks.');
+      setChunksByDocument(current => ({ ...current, [documentId]: data.chunks || [] }));
+    } catch (error) {
+      console.error('Error loading document chunks:', error);
+      setChunksByDocument(current => ({ ...current, [documentId]: [] }));
+    } finally {
+      setLoadingChunksFor(null);
     }
   };
 
@@ -168,24 +194,60 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({
               <p className="text-sm text-zinc-500">No documents yet. Upload a PDF or load the sample dataset.</p>
             </Card>
           ) : (
-            documents.map((doc) => (
-              <Card key={doc.id} className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-100">{doc.name}</p>
-                  <p className="mt-0.5 text-xs text-zinc-500">
-                    {doc.category} · {doc.pageCount} pages · {doc.chunkCount} chunks
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDeleteDocument(doc.id)}
-                  className="rounded-lg p-2 text-zinc-600 transition hover:bg-rose-500/10 hover:text-rose-400"
-                  title="Delete"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </Card>
-            ))
+            documents.map((doc) => {
+              const isExpanded = expandedDocId === doc.id;
+              const chunks = chunksByDocument[doc.id] || [];
+
+              return (
+                <Card key={doc.id} className="overflow-hidden">
+                  <div className="flex items-center justify-between gap-4 p-4">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleChunks(doc.id)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <ChevronDown className={cn('h-4 w-4 shrink-0 text-zinc-500 transition', isExpanded && 'rotate-180')} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-zinc-100">{doc.name}</span>
+                        <span className="mt-0.5 block text-xs text-zinc-500">
+                          {doc.category} · {doc.pageCount} pages · {doc.chunkCount} chunks
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteDocument(doc.id)}
+                      className="rounded-lg p-2 text-zinc-600 transition hover:bg-rose-500/10 hover:text-rose-400"
+                      title="Delete document"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="border-t border-white/[0.06] bg-zinc-950/50 p-4">
+                      {loadingChunksFor === doc.id ? (
+                        <p className="text-xs text-zinc-500">Loading stored chunks…</p>
+                      ) : chunks.length === 0 ? (
+                        <p className="text-xs text-zinc-500">No stored chunks were returned for this document.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {chunks.map((chunk, index) => (
+                            <div key={chunk.id} className="rounded-xl border border-white/[0.06] bg-zinc-900/70 p-3">
+                              <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-500">
+                                <span>Chunk {index + 1} · page {chunk.pageNumber}</span>
+                                <span className="font-mono">{chunk.id}</span>
+                              </div>
+                              <p className="whitespace-pre-wrap text-xs leading-relaxed text-zinc-300">{chunk.text}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              );
+            })
           )}
         </div>
       </div>

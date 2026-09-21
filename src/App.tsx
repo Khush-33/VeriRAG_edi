@@ -7,7 +7,6 @@ import { ChatView } from './components/ChatView';
 import { VerificationReportView } from './components/VerificationReport';
 import { BenchmarkView } from './components/BenchmarkView';
 import { AnimatedPage } from './components/ui/AnimatedPage';
-import { INITIAL_METHOD_METRICS, BENCHMARK_CASES } from './data/benchmarkDataset';
 import {
   BenchmarkCase,
   DocumentCategory,
@@ -25,8 +24,8 @@ export default function App() {
   const [currentResponse, setCurrentResponse] = useState<QueryResponse | null>(null);
   const [isLoadingQuery, setIsLoadingQuery] = useState<boolean>(false);
   const [queryError, setQueryError] = useState<string | null>(null);
-  const [benchmarkMetrics, setBenchmarkMetrics] = useState<MethodBenchmarkResult[]>(INITIAL_METHOD_METRICS);
-  const [benchmarkCases, setBenchmarkCases] = useState<BenchmarkCase[]>(BENCHMARK_CASES);
+  const [benchmarkMetrics, setBenchmarkMetrics] = useState<MethodBenchmarkResult[]>([]);
+  const [benchmarkCases, setBenchmarkCases] = useState<BenchmarkCase[]>([]);
   const [isLoadingBenchmark, setIsLoadingBenchmark] = useState<boolean>(false);
 
   const fetchDocuments = async () => {
@@ -72,6 +71,7 @@ export default function App() {
   };
 
   const handleUploadDocument = async (fileData: { name: string; category: DocumentCategory; content?: string; pdfBase64?: string }) => {
+    setQueryError(null);
     try {
       const res = await fetch('/api/documents/upload', {
         method: 'POST',
@@ -83,37 +83,49 @@ export default function App() {
         await fetchDocuments();
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to upload document.');
+        throw new Error(err.error || 'Failed to upload document.');
       }
     } catch (err) {
       console.error('Error uploading document:', err);
+      setQueryError(err instanceof Error ? err.message : 'Failed to upload document.');
     }
   };
 
   const handleResetSampleDocs = async () => {
+    setQueryError(null);
     try {
       const res = await fetch('/api/documents/load-sample', { method: 'POST' });
       if (res.ok) {
         await fetchDocuments();
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to load sample documents.');
       }
     } catch (err) {
       console.error('Error resetting sample documents:', err);
+      setQueryError(err instanceof Error ? err.message : 'Failed to load sample documents.');
     }
   };
 
   const handleDeleteDocument = async (docId: string) => {
+    setQueryError(null);
     try {
       const res = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
       if (res.ok) {
         await fetchDocuments();
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to delete document.');
       }
     } catch (err) {
       console.error('Error deleting document:', err);
+      setQueryError(err instanceof Error ? err.message : 'Failed to delete document.');
     }
   };
 
   const handleRunBenchmarkSuite = async (dataset: string) => {
     setIsLoadingBenchmark(true);
+    setQueryError(null);
     try {
       const res = await fetch('/api/benchmark/run', {
         method: 'POST',
@@ -123,11 +135,15 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json();
-        setBenchmarkMetrics(data.methodMetrics || INITIAL_METHOD_METRICS);
-        setBenchmarkCases(data.benchmarkCases || BENCHMARK_CASES);
+        setBenchmarkMetrics(data.methodMetrics || []);
+        setBenchmarkCases(data.benchmarkCases || []);
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to run benchmark evaluation.');
       }
     } catch (err) {
       console.error('Error running benchmark suite:', err);
+      setQueryError(err instanceof Error ? err.message : 'Failed to run benchmark evaluation.');
     } finally {
       setIsLoadingBenchmark(false);
     }
