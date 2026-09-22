@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ArrowRight, ChevronDown, FileText, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ArrowRight, ChevronDown, RefreshCw, ShieldCheck } from 'lucide-react';
 import { QueryResponse, VerificationMethod } from '../types';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -40,7 +40,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onOpenReport,
 }) => {
   const [inputQuestion, setInputQuestion] = useState('');
-  const [showEvidence, setShowEvidence] = useState(false);
   const [showOriginal, setShowOriginal] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -169,7 +168,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           </Card>
 
-          {/* Claims — compact list */}
+          {/* Claims — relevant claims only */}
           <div className="space-y-3">
             <SectionHeader
               title={`${currentResponse.claims.length} claims analyzed`}
@@ -188,6 +187,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     )}
                   </div>
                   <p className="mt-2 text-sm text-zinc-200">{claim.claimText}</p>
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                    {claim.verdict === 'SUPPORTED' || claim.verdict === 'PARTIALLY_SUPPORTED'
+                      ? `${claim.sourceDocName || 'Document'}${claim.sourcePageNumber ? ` · page ${claim.sourcePageNumber}` : ''}`
+                      : `${claim.verdict === 'CONTRADICTED' ? 'Rejected' : 'Removed'} because no supporting evidence was found in the uploaded documents.`}
+                  </p>
                 </Card>
               ))}
             </div>
@@ -215,39 +219,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
             )}
           </AnimatePresence>
 
-          {/* Collapsible: evidence */}
-          <button
-            type="button"
-            onClick={() => setShowEvidence(!showEvidence)}
-            className="flex w-full items-center justify-between rounded-xl border border-white/[0.06] px-4 py-3 text-sm text-zinc-400 transition hover:bg-white/[0.02]"
-          >
-            <span className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Retrieved evidence ({currentResponse.retrievedChunks.length})
-            </span>
-            <ChevronDown className={cn('h-4 w-4 transition', showEvidence && 'rotate-180')} />
-          </button>
-          <AnimatePresence>
-            {showEvidence && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {currentResponse.retrievedChunks.map((chunk, i) => (
-                    <Card key={chunk.id || i} className="p-4">
-                      <p className="text-[11px] font-medium text-zinc-500">
-                        {chunk.docName} · p.{chunk.pageNumber}
-                      </p>
-                      <p className="mt-2 text-xs leading-relaxed text-zinc-400 line-clamp-4">{chunk.text}</p>
-                    </Card>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </motion.div>
       )}
 

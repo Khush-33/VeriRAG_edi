@@ -2,6 +2,7 @@ import { env, pipeline } from '@xenova/transformers';
 import fs from 'fs';
 import path from 'path';
 import { getBenchmarkCases } from '../data/benchmarkDataset';
+import { GoogleGenAI } from '@google/genai';
 import {
   BenchmarkCase,
   ClaimVerification,
@@ -13,12 +14,13 @@ import {
   ConfusionMatrix,
   AHSSResult
 } from '../types';
-import { extractAtomicClaims } from './claimExtractor';
+import { extractAtomicClaims, filterRelevantClaims } from './claimExtractor';
 import { vectorStore } from './vectorStore';
+import { runtimeConfig } from './runtimeConfig';
 
-const VECTOR_STORE_FILE = path.resolve('./.vector_store.json');
+const VECTOR_STORE_FILE = path.resolve(runtimeConfig.vectorStoreFile);
 
-export { extractAtomicClaims };
+export { extractAtomicClaims, filterRelevantClaims };
 
 // Configure Hugging Face Transformers.js environment
 const cacheDir = path.resolve(process.env.MODEL_CACHE_DIR || './.cache/transformers');
@@ -48,7 +50,7 @@ export async function getExtractorPipeline() {
 export async function getNliPipeline() {
   if (!nliPipeline) {
     console.log('[ML Engine] Loading Hugging Face DeBERTa NLI Cross-Encoder model: Xenova/nli-deberta-v3-small...');
-    nliPipeline = await pipeline('zero-shot-classification', 'Xenova/nli-deberta-v3-small');
+    nliPipeline = await pipeline('text-classification', 'Xenova/nli-deberta-v3-small');
     console.log('[ML Engine] DeBERTa-v3 NLI Cross-Encoder loaded successfully.');
   }
   return nliPipeline;
@@ -183,7 +185,7 @@ export async function rebuildVectorIndexFromChunks(chunks: DocumentChunk[]): Pro
     return;
   }
 
-  const batchSize = 64;
+  const batchSize = runtimeConfig.embeddingBatchSize;
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
     const embeddedBatch = await attachEmbeddingsToChunks(batch);
@@ -196,7 +198,7 @@ export async function rebuildVectorIndexFromChunks(chunks: DocumentChunk[]): Pro
 export async function addChunksToVectorIndex(chunks: DocumentChunk[]): Promise<void> {
   if (chunks.length === 0) return;
 
-  const batchSize = 64;
+  const batchSize = runtimeConfig.embeddingBatchSize;
   for (let i = 0; i < chunks.length; i += batchSize) {
     const batch = chunks.slice(i, i + batchSize);
     const embeddedBatch = await attachEmbeddingsToChunks(batch);
@@ -253,9 +255,9 @@ export async function chunkDocumentText(
     throw new Error('Document text is empty or non-empty text could not be extracted.');
   }
 
-  const chunkSize = Math.max(80, Math.min(2000, options.chunkSize ?? 500));
-  const overlap = Math.max(0, Math.min(chunkSize - 1, options.overlap ?? 80));
-  const minChunkLength = Math.max(20, options.minChunkLength ?? 80);
+  const chunkSize = Math.max(80, Math.min(2000, options.chunkSize ?? runtimeConfig.chunkSize));
+  const overlap = Math.max(0, Math.min(chunkSize - 1, options.overlap ?? runtimeConfig.chunkOverlap));
+  const minChunkLength = Math.max(20, options.minChunkLength ?? runtimeConfig.minChunkLength);
 
   const normalizedText = trimmedText.replace(/\r\n/g, '\n').replace(/\s+\n/g, '\n').trim();
   const pageRegex = /\[Page\s+(\d+)\]/gi;
@@ -280,43 +282,64 @@ export async function chunkDocumentText(
   let chunkCounter = 1;
 
   for (const segment of pageSegments) {
-    const paragraphs = segment.text
-      .split(/\n\s*\n/)
-      .map(p => p.trim())
-      .filter(p => p.length > minChunkLength || /[.!?]$/.test(p));
+    // PDF text often has one sentence or table row per line rather than blank
+    // lines. Keep those semantic units and pack them without dropping headings.
+    const units = segment.text
+      .split(/\n+/)
+      .flatMap(line => line.match(/[^.!?]+(?:[.!?](?!\d)|$)/g) || [])
+      .map(unit => unit.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .flatMap(unit => {
+        if (unit.length <= chunkSize) return [unit];
+        const words = unit.split(' ');
+        const pieces: string[] = [];
+        let piece = '';
+        for (const word of words) {
+          const candidate = piece ? `${piece} ${word}` : word;
+          if (piece && candidate.length > chunkSize) {
+            pieces.push(piece);
+            piece = word;
+          } else {
+            piece = candidate;
+          }
+        }
+        if (piece) pieces.push(piece);
+        return pieces;
+      });
 
-    for (const paragraph of paragraphs) {
-      const text = paragraph.replace(/\s+/g, ' ').trim();
-      if (!text) continue;
+    let start = 0;
+    while (start < units.length) {
+      let end = start;
+      let length = 0;
+      while (end < units.length) {
+        const nextLength = length === 0 ? units[end].length : length + 1 + units[end].length;
+        if (length > 0 && nextLength > chunkSize) break;
+        length = nextLength;
+        end++;
+      }
 
-      if (text.length <= chunkSize) {
+      const chunkText = units.slice(start, end).join(' ').trim();
+      if (chunkText) {
         rawChunks.push({
           id: `${docId}-p${segment.pageNumber}-c${chunkCounter++}`,
           docId,
           docName,
           pageNumber: segment.pageNumber,
-          text
+          text: chunkText
         });
-        continue;
       }
 
-      let start = 0;
-      while (start < text.length) {
-        const end = Math.min(start + chunkSize, text.length);
-        const chunkText = text.slice(start, end).trim();
-        if (chunkText.length >= minChunkLength) {
-          rawChunks.push({
-            id: `${docId}-p${segment.pageNumber}-c${chunkCounter++}`,
-            docId,
-            docName,
-            pageNumber: segment.pageNumber,
-            text: chunkText
-          });
-        }
+      if (end >= units.length) break;
 
-        if (end >= text.length) break;
-        start = Math.max(start + chunkSize - overlap, start + 1);
+      // Start the next window on a nearby semantic unit so evidence is not
+      // lost at boundaries while avoiding repeated character-level fragments.
+      let overlapLength = 0;
+      let nextStart = end - 1;
+      while (nextStart > start && overlapLength < overlap) {
+        overlapLength += units[nextStart].length + 1;
+        nextStart--;
       }
+      start = Math.max(start + 1, nextStart + 1);
     }
   }
 
@@ -330,7 +353,7 @@ export async function chunkDocumentText(
 export async function retrieveRelevantChunks(
   query: string,
   activeChunks: DocumentChunk[],
-  topK: number = 4
+  topK: number = runtimeConfig.retrievalTopK
 ): Promise<DocumentChunk[]> {
   if (activeChunks.length === 0) return [];
 
@@ -357,7 +380,7 @@ export async function retrieveRelevantChunks(
 // LOCAL RAG ANSWER SYNTHESIS
 // ============================================================================
 
-export function generateLocalRAGAnswer(question: string, retrievedChunks: DocumentChunk[]): string {
+export async function generateLocalRAGAnswer(question: string, retrievedChunks: DocumentChunk[]): Promise<string> {
   if (retrievedChunks.length === 0) {
     return 'No relevant evidence was retrieved for this question from the loaded knowledge base.';
   }
@@ -371,11 +394,26 @@ export function generateLocalRAGAnswer(question: string, retrievedChunks: Docume
     return 'The retrieved evidence was empty; no answer could be synthesized from the current knowledge base.';
   }
 
-  const summarySource = topEvidence
-    .map(text => text.split(/(?<=[.!?])\s+/).slice(0, 2).join(' '))
-    .join(' ');
+  const evidence = topEvidence.join('\n\n');
 
-  return `Based on the retrieved evidence, ${summarySource.substring(0, 600)}${summarySource.length > 600 ? '…' : ''}`;
+  try {
+    if (process.env.GEMINI_API_KEY) {
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const prompt = `You are an academic document assistant. Answer the user's question using only the retrieved context below. Answer only what the question asks; do not add related facts, advice, assumptions, or information from outside the context. Keep the answer concise and factual. If the context does not support an answer, say that the uploaded documents do not provide enough information.\n\nRetrieved context:\n${evidence}\n\nUser question:\n${question}\n\nAnswer:`;
+      const response = await ai.models.generateContent({
+        model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+        contents: prompt,
+      });
+      if (response.text) return response.text;
+    }
+  } catch (err) {
+    console.error('Gemini API generation failed, falling back to basic extraction:', err);
+  }
+
+  // Fallback if no API key or API fails
+  return evidence.length > runtimeConfig.answerMaxCharacters
+    ? `${evidence.substring(0, runtimeConfig.answerMaxCharacters).trimEnd()}...`
+    : evidence;
 }
 
 // ============================================================================
@@ -427,18 +465,15 @@ export async function evaluateDeBERTaNLIProbs(
   try {
     const classifier = await getNliPipeline();
 
-    // Run real zero-shot classification with DeBERTa-v3
+    // Run real NLI text-classification with DeBERTa-v3
     const res = await classifier(
       evidenceText,
-      ['entailment', 'contradiction', 'neutral'],
-      {
-        hypothesis_template: `In relation to the passage, the statement "${claimText}" is {}.`
-      }
+      { text_pair: claimText, topk: null }
     );
 
     const scoresMap: Record<string, number> = {};
-    for (let i = 0; i < res.labels.length; i++) {
-      scoresMap[res.labels[i]] = res.scores[i];
+    for (const item of res) {
+      scoresMap[item.label.toLowerCase()] = item.score;
     }
 
     const entailmentProb = scoresMap['entailment'] || 0;
@@ -791,27 +826,17 @@ export function synthesizeVerifiedAnswer(
   originalAnswer: string,
   verifiedClaims: ClaimVerification[]
 ): string {
-  const unsupportedOrContradicted = verifiedClaims.filter(
-    c => c.verdict === 'CONTRADICTED' || c.verdict === 'UNSUPPORTED'
+  const supportedClaims = verifiedClaims.filter(
+    c => c.verdict === 'SUPPORTED' || c.verdict === 'PARTIALLY_SUPPORTED'
   );
 
-  if (unsupportedOrContradicted.length === 0) {
+  if (supportedClaims.length === verifiedClaims.length) {
     return originalAnswer;
   }
 
-  const cleanParts: string[] = [];
-
-  verifiedClaims.forEach(c => {
-    if (c.verdict === 'SUPPORTED' || c.verdict === 'PARTIALLY_SUPPORTED') {
-      cleanParts.push(c.claimText);
-    } else if (c.verdict === 'CONTRADICTED') {
-      cleanParts.push(`[REVISED/CORRECTED: "${c.claimText}" is contradicted by official regulations — ${c.reasoning}]`);
-    } else if (c.verdict === 'UNSUPPORTED') {
-      cleanParts.push(`[REMOVED: "${c.claimText}" — No supporting evidence found in uploaded academic PDFs.]`);
-    }
-  });
-
-  return cleanParts.join(' ');
+  return supportedClaims.length > 0
+    ? supportedClaims.map(claim => claim.claimText).join(' ')
+    : 'The uploaded documents do not provide enough evidence to answer this question.';
 }
 
 // ============================================================================

@@ -1,6 +1,0 @@
-{
-  "name": "VeriRAG - RAG Hallucination Detection Engine",
-  "description": "Research-grade claim-level RAG hallucination verification system using local SentenceTransformers embeddings, dense vector search, and DeBERTa-v3 NLI cross-encoder verification.",
-  "requestFramePermissions": [],
-  "majorCapabilities": []
-}

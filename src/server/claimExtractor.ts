@@ -14,6 +14,13 @@ export interface AtomicClaim {
   keywords: string[];
 }
 
+const RELEVANCE_STOP_WORDS = new Set([
+  'what', 'which', 'when', 'where', 'who', 'whom', 'whose', 'why', 'how',
+  'does', 'do', 'did', 'can', 'could', 'would', 'should', 'is', 'are', 'was',
+  'were', 'the', 'a', 'an', 'and', 'or', 'but', 'for', 'from', 'with', 'about',
+  'tell', 'explain', 'please', 'need', 'know', 'me', 'they', 'them', 'their'
+]);
+
 const ABBREVIATION_PATTERN = /\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|inc|ltd|co|corp|e\.g|i\.e|vs|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\./gi;
 
 function protectAbbreviations(text: string): string {
@@ -83,6 +90,28 @@ export function extractAtomicClaims(text: string): AtomicClaim[] {
   }
 
   return claims;
+}
+
+/** Keeps only answer claims that address terms present in the user's question. */
+export function filterRelevantClaims(question: string, claims: AtomicClaim[]): AtomicClaim[] {
+  const questionKeywords = new Set(
+    question
+      .toLowerCase()
+      .replace(/[^\w\s%.-]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !RELEVANCE_STOP_WORDS.has(word))
+  );
+
+  if (questionKeywords.size === 0) return claims;
+
+  const relevantClaims = claims.filter(claim => {
+    const matchingKeywords = claim.keywords.filter(keyword => questionKeywords.has(keyword));
+    const matchingNumbers = (claim.claimText.match(/\d+(?:\.\d+)?%?/g) || [])
+      .some(number => question.includes(number));
+    return matchingKeywords.length > 0 || matchingNumbers;
+  });
+
+  return relevantClaims.length > 0 ? relevantClaims : claims;
 }
 
 /**

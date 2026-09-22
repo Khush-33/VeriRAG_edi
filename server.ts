@@ -23,6 +23,7 @@ import {
   initializeMLModels,
   loadOrBuildVectorIndex,
   addChunksToVectorIndex,
+  filterRelevantClaims,
   retrieveRelevantChunks,
   runRealBenchmarkSuite,
   synthesizeVerifiedAnswer,
@@ -32,9 +33,11 @@ import { extractTextFromPdfBuffer } from './src/server/pdfExtractor';
 import {
   loadDocumentsFromFirestore,
   saveDocumentToFirestore,
-  deleteDocumentFromFirestore
+  deleteDocumentFromFirestore,
+  replaceDocumentChunksInFirestore
 } from './src/server/firestoreSync';
 import { ensureFirebaseAuthentication, isFirebaseConfigured } from './src/lib/firebase';
+import { runtimeConfig } from './src/server/runtimeConfig';
 
 // In-memory document and DenseVectorIndex store
 let documentsStore: DocumentFile[] = [];
@@ -77,9 +80,30 @@ async function startServer() {
 
   // Load from Firebase Firestore or remain empty for direct user upload / demo dataset button
   const firestoreData = await loadDocumentsFromFirestore();
-  if (firestoreData && firestoreData.documents.length > 0) {
-    documentsStore = firestoreData.documents;
-    chunksStore = firestoreData.chunks;
+  if (firestoreData) {
+    const synchronizedDocuments: DocumentFile[] = [];
+    const synchronizedChunks: DocumentChunk[] = [];
+    for (const document of firestoreData.documents) {
+      const regeneratedChunks = await chunkDocumentText(document.id, document.name, document.content);
+      const storedChunks = firestoreData.chunks
+        .filter(chunk => chunk.docId === document.id)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      const generatedChunks = [...regeneratedChunks].sort((a, b) => a.id.localeCompare(b.id));
+      const chunksChanged = storedChunks.length !== generatedChunks.length
+        || storedChunks.some((chunk, index) => chunk.id !== generatedChunks[index].id
+          || chunk.pageNumber !== generatedChunks[index].pageNumber
+          || chunk.text !== generatedChunks[index].text);
+
+      const synchronizedDocument = { ...document, chunkCount: regeneratedChunks.length, status: 'ready' as const };
+      if (chunksChanged || document.chunkCount !== regeneratedChunks.length) {
+        await replaceDocumentChunksInFirestore(synchronizedDocument, regeneratedChunks);
+      }
+      synchronizedDocuments.push(synchronizedDocument);
+      synchronizedChunks.push(...regeneratedChunks);
+    }
+
+    documentsStore = synchronizedDocuments;
+    chunksStore = synchronizedChunks;
     console.log(`[Server] Loaded ${documentsStore.length} documents and ${chunksStore.length} chunks from Firebase Firestore.`);
     await loadOrBuildVectorIndex(chunksStore);
   } else {
@@ -89,10 +113,8 @@ async function startServer() {
   }
 
   const app = express();
-  const PORT = 3000;
-
-  app.use(express.json({ limit: '20mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+  app.use(express.json({ limit: runtimeConfig.requestBodyLimit }));
+  app.use(express.urlencoded({ extended: true, limit: runtimeConfig.requestBodyLimit }));
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -181,7 +203,7 @@ async function startServer() {
         id: docId,
         name: name.trim().endsWith('.pdf') ? name.trim() : `${name.trim()}.pdf`,
         category: category || 'Academic Regulations',
-        pageCount: Math.max(pageCount, Math.ceil(parsedText.length / 1200)),
+        pageCount: Math.max(pageCount, (parsedText.match(/\[Page\s+\d+\]/gi) || []).length || 1),
         chunkCount: 0,
         uploadDate: new Date().toISOString().split('T')[0],
         isSample: false,
@@ -244,17 +266,17 @@ async function startServer() {
 
       // 1. Dense Vector Embedding & Retrieval Timing
       const tEmbedStart = Date.now();
-      const retrievedChunks = await retrieveRelevantChunks(question, activeChunks, 4);
+      const retrievedChunks = await retrieveRelevantChunks(question, activeChunks);
       const retrievalTimeMs = Date.now() - tEmbedStart;
 
       // 2. Local RAG Generation Timing
       const tGenStart = Date.now();
-      const originalAnswer = generateLocalRAGAnswer(question, retrievedChunks);
+      const originalAnswer = await generateLocalRAGAnswer(question, retrievedChunks);
       const generationTimeMs = Date.now() - tGenStart;
 
       // 3. Rule-based Atomic Claim Extraction
       const tVerifyStart = Date.now();
-      const atomicClaims = extractAtomicClaims(originalAnswer);
+      const atomicClaims = filterRelevantClaims(question, extractAtomicClaims(originalAnswer));
 
       // 4. Verification Engine Evaluation
       const verifiedClaims: ClaimVerification[] = [];
@@ -334,8 +356,8 @@ async function startServer() {
       const comparisons = [];
 
       // Retrieve & Generate once
-      const retrievedChunks = await retrieveRelevantChunks(question, activeChunks, 4);
-      const originalAnswer = generateLocalRAGAnswer(question, retrievedChunks);
+      const retrievedChunks = await retrieveRelevantChunks(question, activeChunks);
+      const originalAnswer = await generateLocalRAGAnswer(question, retrievedChunks);
       const atomicClaims = extractAtomicClaims(originalAnswer);
 
       for (const method of methods) {
@@ -399,8 +421,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`VeriRAG Open-Source ML Server listening on http://0.0.0.0:${PORT}`);
+  app.listen(runtimeConfig.port, '0.0.0.0', () => {
+    console.log(`VeriRAG Open-Source ML Server listening on http://0.0.0.0:${runtimeConfig.port}`);
   });
 }
 
