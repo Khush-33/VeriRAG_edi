@@ -1,10 +1,6 @@
 # VeriRAG: Claim-Level Hallucination Detection & Verification Engine for RAG Systems
 
 <p align="center">
-  <img src="public/banner.jpg" alt="VeriRAG Banner" width="100%" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15);" />
-</p>
-
-<p align="center">
   <a href="https://github.com/Khush-33/VeriRAG_edi/actions"><img src="https://img.shields.io/badge/Tests-23%20Passing-brightgreen?style=for-the-badge&logo=node.js" alt="Tests Status"></a>
   <a href="https://colab.research.google.com/github/Khush-33/VeriRAG_edi/blob/main/training/VeriRAG_Training.ipynb"><img src="https://img.shields.io/badge/Colab-Train%20Model-orange?style=for-the-badge&logo=googlecolab" alt="Train on Colab"></a>
   <a href="https://colab.research.google.com/github/Khush-33/VeriRAG_edi/blob/main/training/VeriRAG_Evaluation.ipynb"><img src="https://img.shields.io/badge/Colab-Evaluate-blue?style=for-the-badge&logo=googlecolab" alt="Evaluate on Colab"></a>
@@ -27,43 +23,46 @@ VeriRAG solves this by implementing **fine-grained atomic claim decomposition**,
 ```mermaid
 flowchart TD
     subgraph Ingestion["1. Multi-Source Ingestion & Security"]
-        A[Raw Input: PDF / DOCX / TXT / Web URL / Google Drive] --> B{SSRF Security Filter}
-        B -- Blocked Private IP / Metadata --> C[Reject Request with 403 Forbidden]
-        B -- Public Domain / Valid File --> D[Text & Metadata Extraction]
-        D --> E[SHA-256 Content Deduplication]
+        A["Raw Input: PDF / DOCX / TXT / Web URL / Google Drive"] --> B{"SSRF Security Filter"}
+        B -- "Blocked Private IP / Metadata" --> C["Reject Request with 403 Forbidden"]
+        B -- "Public Domain / Valid File" --> D["Text & Metadata Extraction"]
+        D --> E["SHA-256 Content Deduplication"]
     end
 
     subgraph Indexing["2. Semantic Indexing & Vector Store"]
-        E --> F[Sliding-Window Semantic Chunking]
-        F --> G[MiniLM-L6-v2 Dense Embedding 384-d]
-        G --> H[(In-Memory Dense Vector Store)]
+        E --> F["Sliding-Window Semantic Chunking"]
+        F --> G["MiniLM-L6-v2 Dense Embedding 384-d"]
+        G --> H[("In-Memory Dense Vector Store")]
     end
 
     subgraph Generation["3. Query & RAG Generation"]
-        Q[User Query] --> H
-        H --> K[Top-k Retrieved Context Chunks]
-        Q --> L[Gemini / Local LLM Generator]
+        Q["User Query"] --> H
+        H --> K["Top-k Retrieved Context Chunks"]
+        Q --> L["Gemini / Local LLM Generator"]
         K --> L
-        L --> M[Synthesized RAG Response]
+        L --> M["Synthesized RAG Response"]
     end
 
     subgraph Verification["4. Atomic Claim Verification Engine"]
-        M --> N[Atomic Claim Splitter & Normalizer]
-        N --> O[Individual Propositions {c₁, c₂, ..., cₙ}]
-        O --> P[Dense Evidence Passage Matcher]
-        P --> R[DeBERTa-v3 NLI Cross-Encoder]
-        P --> S[Lexical Overlap & Negation Detector]
-        R --> T[Hybrid Confidence & Risk Scoring]
+        M --> N["Atomic Claim Splitter & Normalizer"]
+        N --> O["Individual Propositions: c1, c2, ..., cn"]
+        O --> P["Dense Evidence Passage Matcher"]
+        P --> R["DeBERTa-v3 NLI Cross-Encoder"]
+        P --> S["Lexical Overlap & Negation Detector"]
+        R --> T["Hybrid Confidence & Risk Scoring"]
         S --> T
     end
 
     subgraph Output["5. Explainable Verdicts & UI"]
-        T --> U{4-Class Verdict Taxonomy}
-        U --> V1[SUPPORTED: Green]
-        U --> V2[PARTIALLY_SUPPORTED: Yellow]
-        U --> V3[CONTRADICTED: Red]
-        U --> V4[UNSUPPORTED: Gray]
-        V1 & V2 & V3 & V4 --> W[Interactive Dashboard & Citation Inspector]
+        T --> U{"4-Class Verdict Taxonomy"}
+        U --> V1["SUPPORTED: Green"]
+        U --> V2["PARTIALLY_SUPPORTED: Yellow"]
+        U --> V3["CONTRADICTED: Red"]
+        U --> V4["UNSUPPORTED: Gray"]
+        V1 --> W["Interactive Dashboard & Citation Inspector"]
+        V2 --> W
+        V3 --> W
+        V4 --> W
     end
 
     style Ingestion fill:#f8fafc,stroke:#64748b,stroke-width:2px
@@ -81,25 +80,28 @@ VeriRAG includes enterprise-grade ingestion safeguards that sanitize external in
 
 ```mermaid
 flowchart LR
-    In[Input Source] --> Switch{Source Type}
+    In["Input Source"] --> Switch{"Source Type"}
 
-    Switch -- "PDF Buffer" --> PDF[PDFParse v2 with Page Markers]
-    Switch -- "DOCX Buffer" --> DOCX[Mammoth Raw Body Extractor]
-    Switch -- "Text File" --> TXT[UTF-8 Stream Reader]
-    Switch -- "Google Drive URL" --> DriveParser[Drive ID & Resource Parser]
-    Switch -- "Web Page URL" --> URLValidator[SSRF Protection Layer]
+    Switch -- "PDF Buffer" --> PDF["PDFParse v2 with Page Markers"]
+    Switch -- "DOCX Buffer" --> DOCX["Mammoth Raw Body Extractor"]
+    Switch -- "Text File" --> TXT["UTF-8 Stream Reader"]
+    Switch -- "Google Drive URL" --> DriveParser["Drive ID & Resource Parser"]
+    Switch -- "Web Page URL" --> URLValidator["SSRF Protection Layer"]
 
-    DriveParser --> DriveExport[Google Docs / Drive Direct Export]
+    DriveParser --> DriveExport["Google Docs / Drive Direct Export"]
     DriveExport --> URLValidator
 
-    URLValidator --> IPCheck{Private IP / Metadata?}
-    IPCheck -- "127.0.0.1 / 10.0.0.0/8 / 169.254.169.254" --> Block[Abort: SSRF Detected]
-    IPCheck -- "Valid Public Host" --> Fetch[Safe Stream Fetcher with Size Limit]
-    Fetch --> HTMLStrip[DOM Parser: Strip script/style/nav/footer]
+    URLValidator --> IPCheck{"Private IP / Metadata?"}
+    IPCheck -- "127.0.0.1 / 10.0.0.0/8 / Cloud" --> Block["Abort: SSRF Detected"]
+    IPCheck -- "Valid Public Host" --> Fetch["Safe Stream Fetcher with Size Limit"]
+    Fetch --> HTMLStrip["DOM Parser: Strip script/style/nav/footer"]
 
-    PDF & DOCX & TXT & HTMLStrip --> Dedup[SHA-256 Hash Deduplicator]
-    Dedup --> ChunkEngine[Adaptive Sliding-Window Chunker]
-    ChunkEngine --> VectorIndex[Dense Embedding Indexer]
+    PDF --> Dedup["SHA-256 Hash Deduplicator"]
+    DOCX --> Dedup
+    TXT --> Dedup
+    HTMLStrip --> Dedup
+    Dedup --> ChunkEngine["Adaptive Sliding-Window Chunker"]
+    ChunkEngine --> VectorIndex["Dense Embedding Indexer"]
 ```
 
 ---
@@ -110,23 +112,25 @@ Each generated sentence is broken into atomic clauses and verified through multi
 
 ```mermaid
 flowchart TD
-    Claim[Extracted Proposition Hypothesis] --> Retrieve[Query Dense Vector Store for Best Premise]
-    Retrieve --> TopChunks[Top-3 Evidence Chunks]
+    Claim["Extracted Proposition Hypothesis"] --> Retrieve["Query Dense Vector Store for Best Premise"]
+    Retrieve --> TopChunks["Top-3 Evidence Chunks"]
 
-    TopChunks --> NLI[DeBERTa-v3 Cross-Encoder Inference]
-    TopChunks --> Sim[Cosine Similarity Calculation]
-    TopChunks --> Neg[Explicit Negation / Antonym Detector]
+    TopChunks --> NLI["DeBERTa-v3 Cross-Encoder Inference"]
+    TopChunks --> Sim["Cosine Similarity Calculation"]
+    TopChunks --> Neg["Explicit Negation / Antonym Detector"]
 
-    NLI --> ProbScores[Entailment, Neutral, Contradiction Probabilities]
+    NLI --> ProbScores["Entailment, Neutral, Contradiction Probabilities"]
 
-    ProbScores & Sim & Neg --> FusionEngine[Hybrid Verification Scoring Engine]
+    ProbScores --> FusionEngine["Hybrid Verification Scoring Engine"]
+    Sim --> FusionEngine
+    Neg --> FusionEngine
 
-    FusionEngine --> Decision{Decision Rules}
+    FusionEngine --> Decision{"Decision Rules"}
 
-    Decision -- "Contradiction > 0.60 OR Negation Divergence Detected" --> Contradicted["❌ CONTRADICTED\nHigh Risk Penalty"]
-    Decision -- "Entailment > 0.65 AND Semantic Sim > 0.70" --> Supported["✅ SUPPORTED\nFully Corroborated"]
-    Decision -- "Entailment in [0.40, 0.65] OR Moderate Overlap" --> Partial["⚠️ PARTIALLY_SUPPORTED\nIncomplete Context"]
-    Decision -- "Max Probability Neutral OR Sim < 0.35" --> Unsupported["❓ UNSUPPORTED\nNo Evidentiary Basis"]
+    Decision -- "Contradiction > 0.60 OR Negation Divergence" --> Contradicted["CONTRADICTED: High Risk Penalty"]
+    Decision -- "Entailment > 0.65 AND Semantic Sim > 0.70" --> Supported["SUPPORTED: Fully Corroborated"]
+    Decision -- "Entailment in 0.40 to 0.65 OR Moderate Overlap" --> Partial["PARTIALLY_SUPPORTED: Incomplete Context"]
+    Decision -- "Max Probability Neutral OR Sim < 0.35" --> Unsupported["UNSUPPORTED: No Evidentiary Basis"]
 
     style Contradicted fill:#fee2e2,stroke:#ef4444,stroke-width:2px
     style Supported fill:#dcfce7,stroke:#22c55e,stroke-width:2px
@@ -223,7 +227,7 @@ verirag/
 │   └── ragtruth/
 │       └── ragtruth_dataset.json # Curated RAGTruth QA & verification benchmark
 ├── docs/                         # Architecture, API, and multi-source ingestion docs
-├── public/                       # Static assets & banner
+├── public/                       # Static assets
 ├── src/
 │   ├── components/               # React UI views (ChatView, KnowledgeBase, HomeView)
 │   │   └── ui/                   # Reusable UI cards, badges, statistics counters
