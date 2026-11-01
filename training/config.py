@@ -1,7 +1,22 @@
 from pathlib import Path
+import os
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent
+
+def _resolve_dataset_path():
+    candidates = [
+        REPO_ROOT / 'datasets' / 'ragtruth' / 'ragtruth_dataset.json',
+        BASE_DIR / 'datasets' / 'ragtruth' / 'ragtruth_dataset.json',
+        Path('datasets/ragtruth/ragtruth_dataset.json'),
+        Path('../datasets/ragtruth/ragtruth_dataset.json'),
+        Path('/content/verirag/datasets/ragtruth/ragtruth_dataset.json'),
+        Path('/content/datasets/ragtruth/ragtruth_dataset.json'),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return REPO_ROOT / 'datasets' / 'ragtruth' / 'ragtruth_dataset.json'
 
 class TrainConfig:
     # Model Configuration
@@ -11,11 +26,11 @@ class TrainConfig:
     SEED = 42
 
     # Dataset Configuration
-    DATASET_PATH = REPO_ROOT / 'datasets' / 'ragtruth' / 'ragtruth_dataset.json'
+    DATASET_PATH = _resolve_dataset_path()
     MAX_SEQ_LENGTH = 512
     NUM_CLASSES = 4  # ENTAILED (SUPPORTED), PARTIAL, CONTRADICTED, UNSUPPORTED
-    BATCH_SIZE = 16
-    EVAL_BATCH_SIZE = 32
+    BATCH_SIZE = 8
+    EVAL_BATCH_SIZE = 8
     CLASS_WEIGHTS = [1.0, 1.5, 3.0, 2.0]  # Higher penalty for Contradictions & Unsupported
 
     # Optimization
@@ -24,7 +39,7 @@ class TrainConfig:
     WARMUP_RATIO = 0.1
     MAX_GRAD_NORM = 1.0
     NUM_EPOCHS = 5
-    GRADIENT_ACCUMULATION_STEPS = 2
+    GRADIENT_ACCUMULATION_STEPS = 4
 
     # Early Stopping
     EARLY_STOPPING_PATIENCE = 3

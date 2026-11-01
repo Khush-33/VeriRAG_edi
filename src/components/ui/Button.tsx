@@ -10,19 +10,35 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: React.ReactNode;
 }
 
-const variants: Record<ButtonVariant, string> = {
-  primary:
-    'bg-white text-zinc-950 hover:bg-zinc-100 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
-  secondary:
-    'bg-white/[0.04] text-zinc-200 border border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.12]',
-  ghost: 'text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]',
-  danger: 'bg-rose-500/10 text-rose-300 border border-rose-500/20 hover:bg-rose-500/20',
+const variants: Record<ButtonVariant, React.CSSProperties> = {
+  primary: {
+    background: '#121316',
+    color: '#ffffff',
+    border: '1px solid #121316',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+  },
+  secondary: {
+    background: 'var(--bg-surface)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border-strong)',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+  },
+  ghost: {
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    border: 'none',
+  },
+  danger: {
+    background: 'var(--verdict-contra-bg)',
+    color: 'var(--verdict-contra-text)',
+    border: '1px solid var(--verdict-contra-border)',
+  },
 };
 
 const sizes: Record<ButtonSize, string> = {
   sm: 'h-8 px-3 text-xs gap-1.5',
   md: 'h-10 px-4 text-sm gap-2',
-  lg: 'h-12 px-6 text-sm gap-2',
+  lg: 'h-11 px-6 text-sm gap-2',
 };
 
 export const Button: React.FC<ButtonProps> = ({
@@ -32,6 +48,7 @@ export const Button: React.FC<ButtonProps> = ({
   icon,
   className,
   disabled,
+  style,
   ...props
 }) => (
   <button
@@ -39,10 +56,11 @@ export const Button: React.FC<ButtonProps> = ({
     className={cn(
       'inline-flex items-center justify-center font-medium rounded-xl transition-all duration-200',
       'disabled:opacity-40 disabled:pointer-events-none',
-      variants[variant],
+      'hover:brightness-95 active:scale-[0.98]',
       sizes[size],
       className
     )}
+    style={{ ...variants[variant], ...style }}
     {...props}
   >
     {icon}

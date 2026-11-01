@@ -8,6 +8,8 @@ export type DocumentCategory =
   | 'Student Handbook'
   | 'Other';
 
+export type IngestionSourceType = 'pdf' | 'docx' | 'txt' | 'url' | 'drive' | 'text';
+
 export interface DocumentFile {
   id: string;
   name: string;
@@ -17,7 +19,11 @@ export interface DocumentFile {
   uploadDate: string;
   isSample?: boolean;
   content: string;
-  status?: 'uploading' | 'processing' | 'chunking' | 'embedding' | 'ready';
+  sourceType?: IngestionSourceType;
+  sourceUrl?: string;       // original URL or Drive share link
+  contentHash?: string;     // SHA-256 hex of extracted text for dedup
+  status?: 'uploading' | 'fetching' | 'extracting' | 'chunking' | 'embedding' | 'indexing' | 'ready' | 'failed';
+  errorMessage?: string;    // set when status === 'failed'
 }
 
 export interface DocumentChunk {

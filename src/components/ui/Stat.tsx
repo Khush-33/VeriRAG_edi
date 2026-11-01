@@ -10,11 +10,15 @@ interface StatProps {
 }
 
 export const Stat: React.FC<StatProps> = ({ label, value, hint, accent, className }) => (
-  <div className={cn('rounded-2xl border border-white/[0.06] bg-white/[0.02] p-5', className)}>
-    <p className="text-[11px] uppercase tracking-[0.14em] text-zinc-500 font-medium">{label}</p>
-    <p className={cn('mt-2 text-2xl font-semibold tracking-tight text-zinc-50 tabular-nums', accent)}>
+  <div
+    className={cn('rounded-lg p-5 border border-stone-200 bg-white shadow-2xs', className)}
+  >
+    <p className="text-[11px] uppercase tracking-wider font-mono font-semibold text-stone-500">
+      {label}
+    </p>
+    <p className={cn('mt-2 font-serif text-3xl font-bold tracking-tight tabular-nums text-stone-950', accent)}>
       {value}
     </p>
-    {hint && <p className="mt-1 text-xs text-zinc-500">{hint}</p>}
+    {hint && <p className="mt-1 text-xs text-stone-500 font-sans">{hint}</p>}
   </div>
 );

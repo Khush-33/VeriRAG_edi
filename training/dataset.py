@@ -4,7 +4,13 @@ import random
 import torch
 from torch.utils.data import Dataset
 from typing import List, Dict, Any, Tuple
-from config import label2id
+try:
+    from config import label2id
+except (ImportError, ModuleNotFoundError):
+    try:
+        from .config import label2id
+    except (ImportError, ModuleNotFoundError):
+        from training.config import label2id
 
 class RAGTruthDataset(Dataset):
     """
@@ -117,10 +123,13 @@ def generate_synthetic_ragtruth_full() -> List[Dict[str, Any]]:
         ("The minimum attendance required to appear for final semester examinations is 75%.", "Attendance threshold for semester exams is 75%.", "SUPPORTED"),
         ("The minimum attendance required to appear for final semester examinations is 75%.", "Students need 60% minimum attendance to take semester exams.", "CONTRADICTED"),
         ("The minimum attendance required to appear for final semester examinations is 75%.", "Exams are held online twice a year.", "UNSUPPORTED"),
+        ("The minimum attendance required to appear for final semester examinations is 75%, and failing to meet it results in debarment from exam registration.", "Attendance threshold is 75% and students get fined 100 dollars if lower.", "PARTIALLY_SUPPORTED"),
         ("Medical leave up to 15% can be granted upon submitting a valid certificate within 3 days.", "Medical condonation of up to 15% attendance requires a doctor certificate.", "SUPPORTED"),
         ("Medical leave up to 15% can be granted upon submitting a valid certificate within 3 days.", "Medical leave is strictly non-condonable under any circumstances.", "CONTRADICTED"),
+        ("Medical leave up to 15% can be granted upon submitting a valid certificate within 3 days.", "Medical leave can be granted up to 15% if submitted within 10 days.", "PARTIALLY_SUPPORTED"),
         ("Students with CGPA above 8.5 can register for an overload of 2 additional elective courses.", "High performers with CGPA >= 8.5 may take two extra electives.", "SUPPORTED"),
         ("Students with CGPA above 8.5 can register for an overload of 2 additional elective courses.", "Students with CGPA of 7.0 can register for extra electives.", "CONTRADICTED"),
+        ("Students with CGPA above 8.5 can register for an overload of 2 additional elective courses in their 7th semester.", "Students with CGPA above 8.5 can overload courses, and do not need advisor approval.", "PARTIALLY_SUPPORTED"),
         ("Evaluation consists of 40% Continuous Assessment and 60% End Semester Exam.", "End semester exam carries 60% weightage of final course marks.", "SUPPORTED"),
         ("Evaluation consists of 40% Continuous Assessment and 60% End Semester Exam.", "End semester exam carries 80% weightage.", "CONTRADICTED"),
         ("Final year capstone research projects require a mandatory interim thesis defense in Week 8.", "Capstone projects include an interim thesis presentation in Week 8.", "SUPPORTED"),

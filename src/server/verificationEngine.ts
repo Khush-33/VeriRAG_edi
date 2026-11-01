@@ -628,7 +628,9 @@ export async function verifyClaim(
   }
 
   // Method 3: VeriRAG Hybrid (Proposed Research Model: Dense Embedding + DeBERTa NLI + Keyword + Negation)
-  let rawHybridScore = (0.35 * nliResult.entailmentProb) + (0.30 * semanticSimScore) + (0.20 * semanticSimScore) + (0.15 * keywordOverlapScore);
+  // Weights: NLI entailment 35%, semantic cosine 35%, keyword overlap 15%, lexical dice 15% — sum = 1.0
+  const lexicalScore = computeLexicalSimilarity(claimText, bestChunk ? bestChunk.text : '');
+  let rawHybridScore = (0.35 * nliResult.entailmentProb) + (0.35 * semanticSimScore) + (0.15 * keywordOverlapScore) + (0.15 * lexicalScore);
   if (negationDetected) rawHybridScore -= 0.25;
 
   const hybridScore = Math.max(0, Math.min(1.0, Math.round(rawHybridScore * 1000) / 1000));
@@ -859,6 +861,7 @@ export async function runRealBenchmarkSuite(
     let fp = 0; // Misclassified hallucination as SUPPORTED
     let tn = 0; // Correctly identified CONTRADICTED/UNSUPPORTED hallucination
     let fn = 0; // Misclassified SUPPORTED claim as hallucination
+    let confidenceSum = 0;
 
     const startMs = Date.now();
 
@@ -869,6 +872,7 @@ export async function runRealBenchmarkSuite(
       for (const gtClaim of testCase.groundTruthClaims) {
         totalClaimsEvaluated++;
         const verification = await verifyClaim(gtClaim.claimText, contextChunks, method);
+        confidenceSum += verification.confidence;
 
         const isPredSupported = verification.verdict === 'SUPPORTED' || verification.verdict === 'PARTIALLY_SUPPORTED';
         const isGtSupported = gtClaim.groundTruthVerdict === 'SUPPORTED';
@@ -923,7 +927,7 @@ export async function runRealBenchmarkSuite(
       hallucinationReductionRate: Math.round(hallucinationReductionRate * 10) / 10,
       falsePositiveRate: Math.round(falsePositiveRate * 10) / 10,
       falseNegativeRate: Math.round(falseNegativeRate * 10) / 10,
-      avgConfidence: 86,
+      avgConfidence: totalClaimsEvaluated > 0 ? Math.round(confidenceSum / totalClaimsEvaluated) : 0,
       confusionMatrix: {
         truePositive: tp,
         trueNegative: tn,

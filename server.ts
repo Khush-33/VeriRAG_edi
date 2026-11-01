@@ -1,13 +1,14 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import { SAMPLE_ACADEMIC_DOCS } from './src/data/sampleAcademicDocs';
 import {
   ClaimVerification,
   DocumentChunk,
   DocumentFile,
+  IngestionSourceType,
   QueryResponse,
   VerificationMethod,
   PerformanceBreakdown
@@ -30,6 +31,9 @@ import {
   verifyClaim
 } from './src/server/verificationEngine';
 import { extractTextFromPdfBuffer } from './src/server/pdfExtractor';
+import { extractTextFromDocxBuffer } from './src/server/docxExtractor';
+import { ingestFromUrl } from './src/server/urlFetcher';
+import { parseDriveUrl, ingestFromDrive } from './src/server/driveFetcher';
 import {
   loadDocumentsFromFirestore,
   saveDocumentToFirestore,
@@ -42,6 +46,42 @@ import { runtimeConfig } from './src/server/runtimeConfig';
 // In-memory document and DenseVectorIndex store
 let documentsStore: DocumentFile[] = [];
 let chunksStore: DocumentChunk[] = [];
+
+// ---------------------------------------------------------------------------
+// Deduplication helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns an existing document if its content hash matches, so the same
+ * resource is not indexed twice. Ignores sample documents for dedup.
+ */
+function findDuplicateByHash(contentHash: string): DocumentFile | undefined {
+  return documentsStore.find(d => !d.isSample && d.contentHash === contentHash);
+}
+
+/**
+ * Shared helper: chunk → embed → index → persist a new document.
+ * On failure rolls back the vector index and re-throws.
+ */
+async function ingestProcessedDocument(
+  doc: DocumentFile,
+  rawText: string
+): Promise<{ doc: DocumentFile; chunks: DocumentChunk[] }> {
+  const chunks = await chunkDocumentText(doc.id, doc.name, rawText);
+  doc.chunkCount = chunks.length;
+
+  await addChunksToVectorIndex(chunks);
+  try {
+    await saveDocumentToFirestore(doc, chunks);
+  } catch (persistenceError) {
+    await deleteChunksFromVectorIndex(doc.id);
+    throw persistenceError;
+  }
+
+  documentsStore.push(doc);
+  chunksStore.push(...chunks);
+  return { doc, chunks };
+}
 
 // Initialize default sample academic documents
 async function populateSampleDocuments() {
@@ -158,10 +198,10 @@ async function startServer() {
     }
   });
 
-  // Upload custom document (PDF base64 or raw text)
+  // Upload custom document (PDF base64, DOCX base64, or raw text)
   app.post('/api/documents/upload', async (req, res) => {
     try {
-      const { name, category, content, pdfBase64 } = req.body;
+      const { name, category, content, pdfBase64, docxBase64 } = req.body;
 
       if (typeof name !== 'string' || name.trim().length === 0) {
         return res.status(400).json({ error: 'Document name is required.' });
@@ -171,14 +211,11 @@ async function startServer() {
         return res.status(400).json({ error: 'Document content must be text.' });
       }
 
-      if (pdfBase64 !== undefined && typeof pdfBase64 !== 'string') {
-        return res.status(400).json({ error: 'PDF content must be a base64 string.' });
-      }
-
       let parsedText = content ? String(content).trim() : '';
       let pageCount = 1;
+      let sourceType: IngestionSourceType = 'text';
 
-      if (pdfBase64) {
+      if (pdfBase64 && typeof pdfBase64 === 'string') {
         try {
           const cleanBase64 = pdfBase64.replace(/^data:application\/pdf;base64,/, '').replace(/\s/g, '');
           const buffer = Buffer.from(cleanBase64, 'base64');
@@ -186,44 +223,61 @@ async function startServer() {
           if (pdfData.text && pdfData.text.trim().length > 0) {
             parsedText = pdfData.text.trim();
             pageCount = pdfData.pageCount || 1;
+            sourceType = 'pdf';
           }
-        } catch (pdfErr) {
-          console.error('PDF parsing error:', pdfErr);
+        } catch (pdfErr: any) {
+          return res.status(400).json({ error: pdfErr.message || 'PDF parsing failed.' });
+        }
+      } else if (docxBase64 && typeof docxBase64 === 'string') {
+        try {
+          const cleanBase64 = docxBase64
+            .replace(/^data:application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document;base64,/, '')
+            .replace(/\s/g, '');
+          const buffer = Buffer.from(cleanBase64, 'base64');
+          const docxData = await extractTextFromDocxBuffer(buffer);
+          parsedText = docxData.text;
+          pageCount = docxData.pageCount;
+          sourceType = 'docx';
+        } catch (docxErr: any) {
+          return res.status(400).json({ error: docxErr.message || 'DOCX parsing failed.' });
         }
       }
 
       if (!parsedText || parsedText.trim().length === 0) {
         return res.status(400).json({
-          error: 'Uploaded document produced no readable text. Please upload a valid PDF or text file with actual content.'
+          error: 'Uploaded document produced no readable text. Please upload a valid PDF, DOCX, or text file with actual content.'
+        });
+      }
+
+      const contentHash = createHash('sha256').update(parsedText, 'utf-8').digest('hex');
+      const duplicate = findDuplicateByHash(contentHash);
+      if (duplicate) {
+        return res.json({
+          success: true,
+          duplicate: true,
+          document: duplicate,
+          totalChunks: chunksStore.length,
+          message: `This document is identical to an already-indexed file: "${duplicate.name}".`
         });
       }
 
       const docId = `doc-${randomUUID()}`;
+      const docName = name.trim();
       const newDoc: DocumentFile = {
         id: docId,
-        name: name.trim().endsWith('.pdf') ? name.trim() : `${name.trim()}.pdf`,
+        name: docName,
         category: category || 'Academic Regulations',
         pageCount: Math.max(pageCount, (parsedText.match(/\[Page\s+\d+\]/gi) || []).length || 1),
         chunkCount: 0,
         uploadDate: new Date().toISOString().split('T')[0],
         isSample: false,
         content: parsedText,
+        sourceType,
+        contentHash,
         status: 'ready'
       };
 
-      const chunks = await chunkDocumentText(docId, newDoc.name, parsedText);
-      newDoc.chunkCount = chunks.length;
-
-      await addChunksToVectorIndex(chunks);
-      try {
-        await saveDocumentToFirestore(newDoc, chunks);
-      } catch (persistenceError) {
-        await deleteChunksFromVectorIndex(docId);
-        throw persistenceError;
-      }
-
-      documentsStore.push(newDoc);
-      chunksStore.push(...chunks);
+      await ingestProcessedDocument(newDoc, parsedText);
 
       res.json({
         success: true,
@@ -236,6 +290,107 @@ async function startServer() {
     }
   });
 
+  // Ingest from URL (website or Google Drive link)
+  app.post('/api/documents/ingest-url', async (req, res) => {
+    try {
+      const { url, category, name } = req.body;
+
+      if (!url || typeof url !== 'string' || url.trim().length === 0) {
+        return res.status(400).json({ error: 'A valid URL is required.' });
+      }
+
+      const rawUrl = url.trim();
+      const isDriveUrl = /(?:drive|docs)\.google\.com/i.test(rawUrl);
+
+      let parsedText = '';
+      let pageCount = 1;
+      let sourceLabel = rawUrl;
+      let contentHash = '';
+      let sourceType: IngestionSourceType = 'url';
+
+      if (isDriveUrl) {
+        sourceType = 'drive';
+        const driveResult = await ingestFromDrive(rawUrl);
+        if (driveResult.isPdf && driveResult.buffer) {
+          const pdfData = await extractTextFromPdfBuffer(driveResult.buffer);
+          parsedText = pdfData.text;
+          pageCount = pdfData.pageCount;
+          contentHash = createHash('sha256').update(parsedText, 'utf-8').digest('hex');
+        } else {
+          parsedText = driveResult.text;
+          pageCount = driveResult.pageCount;
+          contentHash = driveResult.contentHash;
+        }
+        sourceLabel = driveResult.sourceLabel;
+      } else {
+        // Generic URL ingestion; PDF content-type is signalled by throwing a plain object
+        try {
+          const urlResult = await ingestFromUrl(rawUrl);
+          parsedText = urlResult.text;
+          pageCount = urlResult.pageCount;
+          contentHash = urlResult.contentHash;
+          sourceLabel = urlResult.sourceLabel;
+          sourceType = 'url';
+        } catch (err: any) {
+          if (err && typeof err === 'object' && err.isPdf && err.buffer) {
+            const pdfData = await extractTextFromPdfBuffer(err.buffer as Buffer);
+            parsedText = pdfData.text;
+            pageCount = pdfData.pageCount;
+            contentHash = createHash('sha256').update(parsedText, 'utf-8').digest('hex');
+            sourceLabel = err.finalUrl || rawUrl;
+            sourceType = 'pdf';
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      if (!parsedText || parsedText.trim().length === 0) {
+        return res.status(400).json({ error: `No readable content could be extracted from: ${rawUrl}` });
+      }
+
+      const duplicate = findDuplicateByHash(contentHash);
+      if (duplicate) {
+        return res.json({
+          success: true,
+          duplicate: true,
+          document: duplicate,
+          totalChunks: chunksStore.length,
+          message: `This source is identical to an already-indexed document: "${duplicate.name}".`
+        });
+      }
+
+      const docId = `doc-${randomUUID()}`;
+      const docName = (name && name.trim()) || sourceLabel;
+      const newDoc: DocumentFile = {
+        id: docId,
+        name: docName,
+        category: category || 'Other',
+        pageCount,
+        chunkCount: 0,
+        uploadDate: new Date().toISOString().split('T')[0],
+        isSample: false,
+        content: parsedText,
+        sourceType,
+        sourceUrl: rawUrl,
+        contentHash,
+        status: 'ready'
+      };
+
+      await ingestProcessedDocument(newDoc, parsedText);
+
+      res.json({
+        success: true,
+        document: newDoc,
+        totalChunks: chunksStore.length
+      });
+    } catch (error: any) {
+      console.error('URL ingestion error:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: message || 'Failed to ingest from URL.' });
+    }
+  });
+
   // Delete a document
   app.delete('/api/documents/:id', async (req, res) => {
     const { id } = req.params;
@@ -245,6 +400,8 @@ async function startServer() {
     chunksStore = chunksStore.filter(c => c.docId !== id);
     res.json({ success: true, remainingDocuments: documentsStore.length, remainingChunks: chunksStore.length });
   });
+
+
 
   // Primary RAG Question & Verification Endpoint
   app.post('/api/rag/query', async (req, res) => {

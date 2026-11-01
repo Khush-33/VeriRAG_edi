@@ -1,0 +1,14 @@
+{
+  "total_samples": 648,
+  "train_samples": 518,
+  "validation_samples": 64,
+  "test_samples": 66,
+  "class_distribution": {
+    "SUPPORTED": 601,
+    "UNSUPPORTED": 27,
+    "CONTRADICTED": 20
+  },
+  "average_token_length": 287.3533950617284,
+  "maximum_token_length": 499,
+  "minimum_token_length": 86
+}

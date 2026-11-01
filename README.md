@@ -10,21 +10,25 @@
 
 ## 🔬 Key Contributions
 
-1. **Atomic Claim Decomposition**: Deconstructs complex LLM responses into fine-grained atomic factual propositions, preventing compound claim ambiguity.
-2. **Dense Semantic Evidence Retrieval**: Computes 384-dimensional dense vector embeddings using `all-MiniLM-L6-v2` with Cosine distance indexing to extract top-$k$ evidence passages.
-3. **Hybrid Verification Architecture**: Synthesizes embedding similarity, DeBERTa-v3 NLI premise-hypothesis entailment probabilities, lexical keyword overlap, and explicit negation detection.
-4. **Weighted Reliability & Risk Scoring**: Calculates overall document hallucination risk using non-linear weighted claim importance, contradiction severity penalties, and confidence weighting.
-5. **RAGTruth Benchmark Integration**: Evaluated on the official RAGTruth benchmark corpus across QA, Summarization, and Data-to-Text generation tasks.
+1. **Multi-Source Knowledge Ingestion**: Ingests unstructured academic regulations, syllabus documents, and institutional policies from PDFs, DOCX files, raw text, public website URLs, and Google Drive share links with automated SSRF protection.
+2. **Atomic Claim Decomposition**: Deconstructs complex LLM responses into fine-grained atomic factual propositions, preventing compound claim ambiguity.
+3. **Dense Semantic Evidence Retrieval**: Computes 384-dimensional dense vector embeddings using `all-MiniLM-L6-v2` with Cosine distance indexing to extract top-$k$ evidence passages.
+4. **Hybrid Verification Architecture**: Synthesizes embedding similarity, DeBERTa-v3 NLI premise-hypothesis entailment probabilities, lexical keyword overlap, and explicit negation detection.
+5. **Weighted Reliability & Risk Scoring**: Calculates overall document hallucination risk using non-linear weighted claim importance, contradiction severity penalties, and confidence weighting.
+6. **RAGTruth Benchmark Integration**: Evaluated on the official RAGTruth benchmark corpus across QA, Summarization, and Data-to-Text generation tasks.
 
 ---
 
 ## 🛠 System Architecture
 
 ```
-User Document (PDF / Text)
+User Document (PDF / DOCX / TXT / Web URL / Google Drive)
        │
        ▼
- [Text Extraction & Processing]
+ [Security Guard & SSRF Protection] ──► Validates URL schemes, blocks private IPs
+       │
+       ▼
+ [Multi-Source Text Extraction & Deduplication] ──► SHA-256 content deduplication
        │
        ▼
  [Chunking & Dense Vector Indexing] (SentenceTransformers 384-d)
@@ -79,6 +83,19 @@ npm run dev
 ```
 
 The application runs at `http://localhost:3000`.
+
+### Running Tests
+
+```bash
+# Run all unit and regression tests
+npm test
+
+# Run TypeScript type check
+npm run lint
+
+# Build production bundle
+npm run build
+```
 
 ---
 

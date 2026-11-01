@@ -7,10 +7,16 @@ interface SectionHeaderProps {
 }
 
 export const SectionHeader: React.FC<SectionHeaderProps> = ({ title, description, action }) => (
-  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between border-b border-stone-200 pb-3">
     <div>
-      <h2 className="text-lg font-semibold tracking-tight text-zinc-50">{title}</h2>
-      {description && <p className="mt-1 max-w-2xl text-sm text-zinc-500">{description}</p>}
+      <h2 className="font-serif text-xl sm:text-2xl font-medium tracking-tight text-stone-950">
+        {title}
+      </h2>
+      {description && (
+        <p className="mt-1 max-w-2xl text-xs sm:text-sm font-sans text-stone-600">
+          {description}
+        </p>
+      )}
     </div>
     {action}
   </div>

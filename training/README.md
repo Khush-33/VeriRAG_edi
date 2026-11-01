@@ -55,18 +55,15 @@ The training workflow uses `datasets/ragtruth/ragtruth_dataset.json`. The loader
 flattens each case's `groundTruthClaims` against its `retrievedContext` before
 splitting the real annotations into train, validation, and test records.
 
-### Fine-Tuning
-```bash
-python train.py
-```
+### Workflow via Jupyter Notebooks
+1. **Data Exploration & Distributions**:
+   Open and run [`VeriRAG_Data_Exploration.ipynb`](file:///c:/Users/HP/Desktop/Workspace/VIT%20MODULE%205/EDI/verirag%20(8)/training/VeriRAG_Data_Exploration.ipynb) to inspect claim length distributions and label proportions.
 
-Training must complete before evaluation. It creates the checkpoint under
-`saved_models/deberta-v3-ragtruth-finetuned`.
+2. **Model Fine-Tuning**:
+   Open and execute [`VeriRAG_Training.ipynb`](file:///c:/Users/HP/Desktop/Workspace/VIT%20MODULE%205/EDI/verirag%20(8)/training/VeriRAG_Training.ipynb). This handles model initialization, class-weighted training, learning rate warmup/decay, and checkpoint saving to `saved_models/deberta-v3-ragtruth-finetuned`.
 
-### Evaluation & Comparative Benchmarking
-```bash
-python evaluate.py
-```
+3. **Evaluation & Comparative Benchmarking**:
+   Open and execute [`VeriRAG_Evaluation.ipynb`](file:///c:/Users/HP/Desktop/Workspace/VIT%20MODULE%205/EDI/verirag%20(8)/training/VeriRAG_Evaluation.ipynb) to generate test set accuracy, F1, latency, confusion matrices, and ROC/PR curves.
 
 ---
 
